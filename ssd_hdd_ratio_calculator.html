@@ -1,0 +1,229 @@
+
+<h2 class="sr-only">bcache 方案一 SSD 与 HDD 配比计算器，根据磁盘参数和负载特征输出推荐配比</h2>
+<style>
+*{box-sizing:border-box}
+.calc{padding:1rem 0;color:var(--color-text-primary);font-size:13px}
+.section{margin-bottom:1.4rem}
+.sec-title{font-size:12px;font-weight:500;color:var(--color-text-tertiary);letter-spacing:.04em;text-transform:uppercase;margin-bottom:10px}
+.row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.row label{width:160px;flex-shrink:0;font-size:13px;color:var(--color-text-secondary)}
+.row input[type=range]{flex:1}
+.row .val{width:80px;text-align:right;font-size:13px;font-weight:500;color:var(--color-text-primary)}
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:1.4rem}
+.card{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:12px}
+.card-label{font-size:11px;color:var(--color-text-tertiary);margin-bottom:4px}
+.card-val{font-size:20px;font-weight:500}
+.card-unit{font-size:11px;color:var(--color-text-secondary);margin-top:2px}
+.verdict{border-radius:var(--border-radius-lg);padding:14px 16px;margin-bottom:1.2rem;border:0.5px solid}
+.verdict.good{background:var(--color-background-success);border-color:var(--color-border-success);color:var(--color-text-success)}
+.verdict.warn{background:var(--color-background-warning);border-color:var(--color-border-warning);color:var(--color-text-warning)}
+.verdict.bad{background:var(--color-background-danger);border-color:var(--color-border-danger);color:var(--color-text-danger)}
+.verdict-title{font-size:13px;font-weight:500;margin-bottom:4px}
+.verdict-body{font-size:12px;line-height:1.6}
+.chart-wrap{position:relative;width:100%;height:220px;margin-bottom:1.2rem}
+.legend{display:flex;gap:16px;margin-bottom:8px;flex-wrap:wrap}
+.leg{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--color-text-secondary)}
+.leg-sq{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+</style>
+
+<div class="calc">
+  <div class="section">
+    <div class="sec-title">SSD 参数</div>
+    <div class="row">
+      <label>SSD 容量 (GB)</label>
+      <input type="range" id="ssd_cap" min="100" max="4000" step="100" value="500" oninput="calc()">
+      <span class="val" id="v_ssd_cap">500 GB</span>
+    </div>
+    <div class="row">
+      <label>SSD 随机写 IOPS</label>
+      <input type="range" id="ssd_iops" min="10000" max="500000" step="5000" value="80000" oninput="calc()">
+      <span class="val" id="v_ssd_iops">80,000</span>
+    </div>
+    <div class="row">
+      <label>SSD 顺序写带宽 (MB/s)</label>
+      <input type="range" id="ssd_bw" min="100" max="3500" step="50" value="500" oninput="calc()">
+      <span class="val" id="v_ssd_bw">500 MB/s</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-title">HDD 参数（单盘）</div>
+    <div class="row">
+      <label>HDD 容量 (TB)</label>
+      <input type="range" id="hdd_cap" min="1" max="20" step="1" value="4" oninput="calc()">
+      <span class="val" id="v_hdd_cap">4 TB</span>
+    </div>
+    <div class="row">
+      <label>HDD 随机读 IOPS</label>
+      <input type="range" id="hdd_iops" min="50" max="300" step="10" value="120" oninput="calc()">
+      <span class="val" id="v_hdd_iops">120</span>
+    </div>
+    <div class="row">
+      <label>HDD 顺序带宽 (MB/s)</label>
+      <input type="range" id="hdd_bw" min="50" max="300" step="10" value="180" oninput="calc()">
+      <span class="val" id="v_hdd_bw">180 MB/s</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-title">负载特征</div>
+    <div class="row">
+      <label>热数据比例 (%)</label>
+      <input type="range" id="hot_pct" min="1" max="50" step="1" value="10" oninput="calc()">
+      <span class="val" id="v_hot_pct">10%</span>
+    </div>
+    <div class="row">
+      <label>随机 I/O 占比 (%)</label>
+      <input type="range" id="rand_pct" min="10" max="100" step="5" value="70" oninput="calc()">
+      <span class="val" id="v_rand_pct">70%</span>
+    </div>
+    <div class="row">
+      <label>写回脏数据上限 (%)</label>
+      <input type="range" id="dirty_pct" min="5" max="40" step="5" value="20" oninput="calc()">
+      <span class="val" id="v_dirty_pct">20%</span>
+    </div>
+  </div>
+
+  <div class="cards" id="result-cards">
+    <div class="card"><div class="card-label">推荐 HDD 数量</div><div class="card-val" id="r_hdd">—</div><div class="card-unit">块（IOPS 瓶颈）</div></div>
+    <div class="card"><div class="card-label">SSD 缓存覆盖率</div><div class="card-val" id="r_cover">—</div><div class="card-unit">热数据可全部缓存</div></div>
+    <div class="card"><div class="card-label">SSD 写放大余量</div><div class="card-val" id="r_wamp">—</div><div class="card-unit">倍（脏数据刷盘）</div></div>
+    <div class="card"><div class="card-label">SSD 寿命系数</div><div class="card-val" id="r_life">—</div><div class="card-unit">相对基准</div></div>
+  </div>
+
+  <div id="verdict" class="verdict good">
+    <div class="verdict-title" id="v-title">计算中...</div>
+    <div class="verdict-body" id="v-body"></div>
+  </div>
+
+  <div class="legend">
+    <div class="leg"><div class="leg-sq" style="background:#1D9E75"></div>IOPS 限制下最大 HDD 数</div>
+    <div class="leg"><div class="leg-sq" style="background:#7F77DD"></div>带宽限制下最大 HDD 数</div>
+    <div class="leg"><div class="leg-sq" style="background:#EF9F27"></div>容量限制下最大 HDD 数</div>
+  </div>
+  <div class="chart-wrap">
+    <canvas id="ratio_chart" role="img" aria-label="三种约束条件下 SSD 可服务的最大 HDD 数量对比">三种约束（IOPS、带宽、容量）下允许的最大 HDD 数量对比柱状图。</canvas>
+  </div>
+
+  <div class="btn-row">
+    <button onclick="sendPrompt('详细说明 bcache writeback_percent 和 sequential_cutoff 怎么配置最优')">writeback 参数调优 ↗</button>
+    <button onclick="sendPrompt('SSD 在 bcache 方案一中如何同时承担 WAL/DB 和缓存两个角色，分区怎么划分')">SSD 分区规划 ↗</button>
+    <button onclick="sendPrompt('bcache 缓存写满后的刷盘策略和性能抖动如何处理')">刷盘抖动处理 ↗</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+let chart = null;
+
+function fmt(n){ return n >= 1000 ? Math.round(n/100)/10+'K' : String(Math.round(n)); }
+
+function calc(){
+  const ssd_cap  = +document.getElementById('ssd_cap').value;
+  const ssd_iops = +document.getElementById('ssd_iops').value;
+  const ssd_bw   = +document.getElementById('ssd_bw').value;
+  const hdd_cap  = +document.getElementById('hdd_cap').value;
+  const hdd_iops = +document.getElementById('hdd_iops').value;
+  const hdd_bw   = +document.getElementById('hdd_bw').value;
+  const hot_pct  = +document.getElementById('hot_pct').value / 100;
+  const rand_pct = +document.getElementById('rand_pct').value / 100;
+  const dirty_pct= +document.getElementById('dirty_pct').value / 100;
+
+  document.getElementById('v_ssd_cap').textContent  = ssd_cap + ' GB';
+  document.getElementById('v_ssd_iops').textContent = ssd_iops.toLocaleString();
+  document.getElementById('v_ssd_bw').textContent   = ssd_bw + ' MB/s';
+  document.getElementById('v_hdd_cap').textContent  = hdd_cap + ' TB';
+  document.getElementById('v_hdd_iops').textContent = hdd_iops;
+  document.getElementById('v_hdd_bw').textContent   = hdd_bw + ' MB/s';
+  document.getElementById('v_hot_pct').textContent  = Math.round(hot_pct*100) + '%';
+  document.getElementById('v_rand_pct').textContent = Math.round(rand_pct*100) + '%';
+  document.getElementById('v_dirty_pct').textContent= Math.round(dirty_pct*100) + '%';
+
+  // ── 约束1：IOPS ──
+  // SSD 需要承接所有随机 I/O，每块 HDD 贡献 hdd_iops 随机，
+  // SSD 处理写放大后有效 IOPS ≈ ssd_iops * 0.7（留 30% 余量给刷盘）
+  const ssd_iops_eff = ssd_iops * 0.7;
+  const n_iops = Math.floor(ssd_iops_eff / (hdd_iops * rand_pct * 2)); // *2 因为写放大
+
+  // ── 约束2：带宽 ──
+  // writeback 刷盘峰值：dirty_pct 比例的缓存需要在合理时间（30s）内刷完
+  // 同时服务读写：SSD 带宽预留 40% 给刷盘，60% 给正常 I/O
+  const ssd_bw_serve = ssd_bw * 0.6;
+  const n_bw = Math.floor(ssd_bw_serve / (hdd_bw * (1 - rand_pct) * 1.5));
+
+  // ── 约束3：容量 ──
+  // 热数据 = hdd_cap * n * hot_pct（GB）≤ ssd_cap
+  // n ≤ ssd_cap / (hdd_cap * 1024 * hot_pct)
+  const n_cap = Math.floor(ssd_cap / (hdd_cap * 1024 * hot_pct));
+
+  const n_iops_c = Math.max(1, n_iops);
+  const n_bw_c   = Math.max(1, n_bw);
+  const n_cap_c  = Math.max(1, Math.min(n_cap, 32));
+  const n_rec    = Math.min(n_iops_c, n_bw_c, n_cap_c);
+
+  // 覆盖率
+  const hot_total_gb = hdd_cap * 1024 * n_rec * hot_pct;
+  const cover = Math.min(100, Math.round(ssd_cap / hot_total_gb * 100));
+
+  // 写放大余量（SSD IOPS vs 实际需求）
+  const actual_iops_needed = hdd_iops * n_rec * rand_pct * 2;
+  const wamp = (ssd_iops / actual_iops_needed).toFixed(1);
+
+  // 寿命系数（越大越好，>1 表示余量充足）
+  const life = Math.min(9.9, +wamp * (cover/100)).toFixed(1);
+
+  document.getElementById('r_hdd').textContent   = n_rec;
+  document.getElementById('r_cover').textContent = cover + '%';
+  document.getElementById('r_wamp').textContent  = wamp + 'x';
+  document.getElementById('r_life').textContent  = life + 'x';
+
+  // 瓶颈判断
+  const bottleneck = n_iops_c <= n_bw_c && n_iops_c <= n_cap_c ? 'IOPS'
+                   : n_bw_c <= n_cap_c ? '带宽' : '容量';
+  const vEl = document.getElementById('verdict');
+  const vtEl = document.getElementById('v-title');
+  const vbEl = document.getElementById('v-body');
+
+  vEl.className = 'verdict ' + (n_rec >= 3 ? 'good' : n_rec >= 2 ? 'warn' : 'bad');
+  vtEl.textContent = `推荐配比：1 块 SSD 对应 ${n_rec} 块 HDD（瓶颈：${bottleneck}）`;
+  vbEl.textContent = `热数据缓存覆盖率 ${cover}%，SSD IOPS 余量 ${wamp}x。`
+    + (cover < 80 ? ` 热数据无法完全装入 SSD，命中率将下降，建议加大 SSD 容量或减少 HDD 数量。` : '')
+    + (n_rec > 6 ? ` HDD 数量较多，建议单独划一个分区给 BlueStore WAL/DB，避免缓存盘压力过大。` : '');
+
+  // 更新图表
+  const labels = ['IOPS 限制', '带宽限制', '容量限制'];
+  const data   = [n_iops_c, n_bw_c, Math.min(n_cap_c, 32)];
+  const colors = ['#1D9E75','#7F77DD','#EF9F27'];
+
+  if(chart){
+    chart.data.datasets[0].data = data;
+    chart.update();
+  } else {
+    chart = new Chart(document.getElementById('ratio_chart'),{
+      type:'bar',
+      data:{
+        labels,
+        datasets:[{
+          label:'最大 HDD 数',
+          data,
+          backgroundColor: colors,
+          borderColor: ['#0F6E56','#534AB7','#BA7517'],
+          borderWidth:1
+        }]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{display:false}},
+        scales:{
+          x:{ticks:{color:'#888780',font:{size:12}},grid:{color:'rgba(136,135,128,0.12)'}},
+          y:{ticks:{color:'#888780',font:{size:12},stepSize:1},grid:{color:'rgba(136,135,128,0.12)'},
+             title:{display:true,text:'最多可搭配 HDD 块数',color:'#888780',font:{size:11}}}
+        }
+      }
+    });
+  }
+}
+
+calc();
+</script>
