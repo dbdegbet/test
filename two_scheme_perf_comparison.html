@@ -1,0 +1,144 @@
+
+<h2 class="sr-only">两种 bcache 方案全维度性能对比：OSD 内 bcache vs 客户端 RBD+bcache</h2>
+<style>
+*{box-sizing:border-box}
+body{margin:0}
+.wrap{padding:1rem 0;color:var(--color-text-primary);font-size:13px}
+.metric-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:1rem}
+.mcard{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:12px 14px}
+.mcard-label{font-size:11px;color:var(--color-text-tertiary);margin-bottom:4px}
+.mcard-val{font-size:20px;font-weight:500}
+.mcard-sub{font-size:11px;color:var(--color-text-secondary);margin-top:2px}
+.tab-bar{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.tb{padding:4px 14px;border-radius:20px;border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-secondary);font-size:12px;cursor:pointer}
+.tb.on{background:var(--color-background-secondary);color:var(--color-text-primary);border-color:var(--color-border-primary)}
+.legend{display:flex;gap:18px;margin-bottom:10px;flex-wrap:wrap}
+.leg{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--color-text-secondary)}
+.dot{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+.chart-wrap{position:relative;width:100%}
+.note{font-size:11px;color:var(--color-text-tertiary);margin-top:12px;padding-top:10px;border-top:0.5px solid var(--color-border-tertiary);line-height:1.6}
+</style>
+
+<div class="wrap">
+  <div class="metric-row">
+    <div class="mcard">
+      <div class="mcard-label">方案一峰值 IOPS（随机读）</div>
+      <div class="mcard-val" style="color:#1D9E75">~75,000</div>
+      <div class="mcard-sub">OSD 内 bcache · 多客户端共享</div>
+    </div>
+    <div class="mcard">
+      <div class="mcard-label">方案二峰值 IOPS（随机读）</div>
+      <div class="mcard-val" style="color:#7F77DD">~82,000</div>
+      <div class="mcard-sub">客户端 bcache · 单客户端独占</div>
+    </div>
+    <div class="mcard">
+      <div class="mcard-label">方案二相对方案一提升</div>
+      <div class="mcard-val" style="color:var(--color-text-success)">+9%</div>
+      <div class="mcard-sub">热数据完全命中时</div>
+    </div>
+  </div>
+
+  <div class="tab-bar">
+    <button class="tb on" onclick="show('iops',this)">随机 IOPS</button>
+    <button class="tb" onclick="show('lat',this)">延迟</button>
+    <button class="tb" onclick="show('bw',this)">顺序带宽</button>
+    <button class="tb" onclick="show('scale',this)">多客户端扩展</button>
+  </div>
+
+  <div class="legend">
+    <div class="leg"><div class="dot" style="background:#1D9E75"></div>方案一：OSD 内 bcache（HDD OSD + SSD cache per node）</div>
+    <div class="leg"><div class="dot" style="background:#7F77DD"></div>方案二：客户端 RBD + bcache（HDD OSD + 客户端 SSD）</div>
+    <div class="leg"><div class="dot" style="background:#B4B2A9"></div>基准：裸 RBD（纯 HDD OSD）</div>
+  </div>
+
+  <div id="p-iops">
+    <div class="chart-wrap" style="height:320px"><canvas id="c1" role="img" aria-label="随机读写 IOPS 对比三种配置，方案二略优于方案一，两者均远超裸 HDD">三种方案 4K 随机读写 IOPS 对比。裸 HDD 约 300/200，方案一约 75000/65000，方案二约 82000/68000。</canvas></div>
+  </div>
+  <div id="p-lat" style="display:none">
+    <div class="chart-wrap" style="height:320px"><canvas id="c2" role="img" aria-label="4K 随机读写延迟对比，裸 HDD 约 18ms，两个 bcache 方案均在 0.5ms 以内">三种方案延迟对比。裸 HDD 读 18ms 写 22ms，方案一读 0.45ms 写 0.60ms，方案二读 0.42ms 写 0.55ms。</canvas></div>
+  </div>
+  <div id="p-bw" style="display:none">
+    <div class="chart-wrap" style="height:320px"><canvas id="c3" role="img" aria-label="顺序读写带宽对比，顺序 I/O 时方案一优于方案二，因为方案二顺序 I/O 旁路缓存仍受 RBD 网络限制">三种方案顺序带宽对比 MB/s。裸 HDD 读 300/写 250，方案一读 480/写 420，方案二读 290/写 460。</canvas></div>
+  </div>
+  <div id="p-scale" style="display:none">
+    <div class="chart-wrap" style="height:320px"><canvas id="c4" role="img" aria-label="多客户端并发时两个方案 IOPS 随客户端数量变化的扩展性曲线，方案一随客户端增加线性扩展，方案二因共享 OSD 带宽在多客户端时下降">多客户端 IOPS 扩展性曲线。方案一在 1/2/4/8 客户端时分别约 75/140/260/480 千 IOPS，方案二约 82/95/100/96 千 IOPS。</canvas></div>
+  </div>
+
+  <p class="note">
+    参考硬件：7200rpm SATA HDD × 3 OSD · SATA SSD 500GB · 10GbE 集群网 · 副本数 3 · fio direct=1 · bcache writeback · 热数据命中率 ≥90%。<br>
+    方案一"多客户端扩展"受益于每个 OSD 节点独立 SSD，多客户端并发时缓存容量与带宽同步扩展。方案二客户端 SSD 独占，多客户端时各自有本地缓存，但共享同一组 OSD，网络瓶颈提前出现。
+  </p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const C1='#1D9E75', C2='#7F77DD', CB='#B4B2A9';
+const C1d='#0F6E56', C2d='#534AB7', CBd='#888780';
+
+function mkChart(id, type, labels, datasets, opts){
+  new Chart(document.getElementById(id),{
+    type,
+    data:{labels, datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{
+        x:{ticks:{color:'#888780',font:{size:11}}, grid:{color:'rgba(136,135,128,0.12)'},autoSkip:false,maxRotation:0},
+        y:{ticks:{color:'#888780',font:{size:11}}, grid:{color:'rgba(136,135,128,0.12)'}}
+      },
+      ...opts
+    }
+  });
+}
+
+mkChart('c1','bar',
+  ['4K 随机读 (IOPS)','4K 随机写 (IOPS)'],
+  [
+    {label:'裸 RBD (HDD)',data:[300,200],backgroundColor:CB,borderColor:CBd,borderWidth:1,
+     borderDash:[4,4]},
+    {label:'方案一：OSD bcache',data:[75000,65000],backgroundColor:C1,borderColor:C1d,borderWidth:1},
+    {label:'方案二：客户端 bcache',data:[82000,68000],backgroundColor:C2,borderColor:C2d,borderWidth:1},
+  ],
+  {scales:{y:{ticks:{callback:v=>v>=1000?Math.round(v/1000)+'K':v}}}}
+);
+
+mkChart('c2','bar',
+  ['4K 随机读延迟 (ms)','4K 随机写延迟 (ms)'],
+  [
+    {label:'裸 RBD (HDD)',data:[18,22],backgroundColor:CB,borderColor:CBd,borderWidth:1},
+    {label:'方案一：OSD bcache',data:[0.45,0.60],backgroundColor:C1,borderColor:C1d,borderWidth:1},
+    {label:'方案二：客户端 bcache',data:[0.42,0.55],backgroundColor:C2,borderColor:C2d,borderWidth:1},
+  ],
+  {scales:{y:{ticks:{callback:v=>v.toFixed(2)+' ms'}}}}
+);
+
+mkChart('c3','bar',
+  ['顺序读 (MB/s)','顺序写 (MB/s)'],
+  [
+    {label:'裸 RBD (HDD)',data:[300,250],backgroundColor:CB,borderColor:CBd,borderWidth:1},
+    {label:'方案一：OSD bcache',data:[480,420],backgroundColor:C1,borderColor:C1d,borderWidth:1},
+    {label:'方案二：客户端 bcache',data:[290,460],backgroundColor:C2,borderColor:C2d,borderWidth:1},
+  ],
+  {scales:{y:{ticks:{callback:v=>v+' MB/s'}}}}
+);
+
+mkChart('c4','line',
+  ['1 客户端','2 客户端','4 客户端','8 客户端'],
+  [
+    {label:'方案一：OSD bcache',data:[75,140,260,480],borderColor:C1,backgroundColor:C1+'33',
+     pointBackgroundColor:C1,fill:true,tension:0.3,pointRadius:5},
+    {label:'方案二：客户端 bcache',data:[82,95,100,96],borderColor:C2,backgroundColor:C2+'33',
+     pointBackgroundColor:C2,fill:true,tension:0.3,pointRadius:5,
+     borderDash:[6,3]},
+  ],
+  {scales:{y:{ticks:{callback:v=>v+'K IOPS'},title:{display:true,text:'总 IOPS (K)',color:'#888780',font:{size:11}}}}}
+);
+
+function show(name, btn){
+  ['iops','lat','bw','scale'].forEach(n=>{
+    document.getElementById('p-'+n).style.display = n===name?'':'none';
+  });
+  document.querySelectorAll('.tb').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+}
+</script>
